@@ -33,13 +33,13 @@ st.set_page_config(
 # ============================================================================
 
 BASELINE_AVG   = 69.03
-BASELINE_MODEL = "llama-3.3-70b-versatile"
+BASELINE_MODEL = "llama-3.3-8B-versatile"
 
 
 def get_weight(model):
-    if "8b" in model.lower() or "instant" in model.lower():
+    if "1.7B" in model.lower() or "instant" in model.lower():
         return 1.7
-    if "70b" in model.lower() or "versatile" in model.lower():
+    if "8B" in model.lower() or "versatile" in model.lower():
         return 8.0
     return 0.0
 
@@ -85,9 +85,9 @@ if not os.environ.get("GROQ_API_KEY"):
 
 st.title("⚡ Adaptive LLM Routing System")
 st.markdown(
-    "Final Year AI Project — Routes queries to the right model automatically. "
-    "**Simple queries** → fast 8B model. "
-    "**Complex queries** → compressed by 8B → answered by 70B. "
+    "  Routes queries to the right model automatically. "
+    "**Simple queries** → fast 1.7B model. "
+    "**Complex queries** → compressed by 1.7B → answered by 8B. "
     "**Repeated queries** → semantic cache (near-zero latency)."
 )
 st.divider()
@@ -109,8 +109,8 @@ with st.sidebar:
     st.metric("Total Queries",      n)
     st.metric("Cache Hits",         cache_hits,
               delta=f"{cache_hits/n*100:.0f}%" if n else None)
-    st.metric("Simple → 8B fast",  simple_count)
-    st.metric("Complex → 70B",     complex_count)
+    st.metric("Simple → 1.7B fast",  simple_count)
+    st.metric("Complex → 8B",     complex_count)
     st.metric("Compressed",        compressed)
 
     st.divider()
@@ -128,7 +128,7 @@ with st.sidebar:
     if st.session_state.total_compute_base > 0:
         red = (1 - st.session_state.total_compute_full /
                st.session_state.total_compute_base) * 100
-        st.metric("Compute Reduction", f"{red:.1f}%", delta="vs always 70B")
+        st.metric("Compute Reduction", f"{red:.1f}%", delta="vs always 8B")
 
     if st.button("🗑 Clear History", use_container_width=True):
         st.session_state.history            = []
@@ -187,9 +187,9 @@ if submit and query.strip():
     if result.cache_hit:
         st.success("⚡ **CACHE HIT** — Returned instantly from semantic cache (0 tokens)")
     elif result.complexity == "SIMPLE":
-        st.info("🟢 **SIMPLE** → fast 8B model (llama-3.1-8b-instant)")
+        st.info("🟢 **SIMPLE** → fast 1.7B model (llama-3.1-1.7B-instant)")
     else:
-        st.warning("🟠 **COMPLEX** → compressed by 8B → answered by 70B (llama-3.3-70b-versatile)")
+        st.warning("🟠 **COMPLEX** → compressed by 1.7B → answered by 8B (llama-3.3-8B-versatile)")
 
     m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Total",      f"{result.total_s:.2f}s")
@@ -201,9 +201,9 @@ if submit and query.strip():
     m6.metric("Time Saved", f"{saving:.1f}s", delta=f"{saving/BASELINE_AVG*100:.0f}%")
 
     if result.compressed_query:
-        st.subheader("🔍 Compressed Brief (sent to 70B model)")
+        st.subheader("🔍 Compressed Brief (sent to 8B model)")
         st.info(result.compressed_query)
-        st.caption("The 8B model rewrote your query. The 70B model answered this — not your raw query.")
+        st.caption("The 1.7B model rewrote your query. The 8B model answered this — not your raw query.")
 
     st.subheader("💬 Answer")
     st.markdown(result.answer)
