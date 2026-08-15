@@ -24,9 +24,8 @@ from groq import Groq
 # Models
 # ============================================================================
 
-LOW_MODEL  = "llama-3.1-8b-instant"      # fast, cheap — replaces qwen3:1.7b
-HIGH_MODEL = "llama-3.3-70b-versatile"   # capable  — replaces qwen3:8b
-
+LOW_MODEL  = "openai/gpt-oss-20b"
+HIGH_MODEL = "openai/gpt-oss-120b"
 
 # ============================================================================
 # Response dataclass — same interface as OllamaResponse
