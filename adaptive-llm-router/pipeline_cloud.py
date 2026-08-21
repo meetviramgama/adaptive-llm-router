@@ -24,19 +24,12 @@ from groq_client import generate, LOW_MODEL, HIGH_MODEL
 # Classifier prompt
 # ============================================================================
 
-CLASSIFIER_PROMPT = """Classify the query as SIMPLE or COMPLEX.
+CLASSIFIER_PROMPT = """You are a binary classifier. Read the query and reply with exactly one word.
 
-SIMPLE: single fact, one word/sentence answer, no reasoning needed.
-Examples: capital cities, definitions, yes/no, basic math, fact lookup,
-definition, one sentence, arithmetic, translation, entity lookup.
-
-COMPLEX: requires explanation, analysis, comparison, or expertise.
-Examples: how/why questions, comparisons, risks, strategies, multiple steps,
-recommendation, planning, comparison, debugging, code generation,
-long explanation, open-ended advice.
+Reply COMPLEX if the query requires explanation, analysis, comparison, reasoning, or multiple steps.
+Reply SIMPLE if the query needs only a short factual answer.
 
 Reply with ONE word only: SIMPLE or COMPLEX"""
-
 
 # ============================================================================
 # Compression prompt
@@ -157,7 +150,7 @@ class Pipeline:
             model       = LOW_MODEL,
             prompt      = query,
             system      = CLASSIFIER_PROMPT,
-            max_tokens  = 5,
+            max_tokens  = 10,
             temperature = 0.0,
         )
         raw   = response.text.strip().upper()
