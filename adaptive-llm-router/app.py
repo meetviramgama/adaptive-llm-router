@@ -5,34 +5,46 @@ Adaptive LLM Routing System — Cloud Demo
 
 Architecture:
 
-    Simple Query
-        → GPT-OSS-20B
+    SIMPLE
+        User Query
+            ↓
+        GPT-OSS-20B
+            ↓
+        Answer
 
-    Complex Query
-        → GPT-OSS-20B compression
-        → GPT-OSS-120B answer
+    COMPLEX
+        User Query
+            ↓
+        GPT-OSS-20B Classifier
+            ↓
+        GPT-OSS-20B Compression
+            ↓
+        GPT-OSS-120B
+            ↓
+        Answer
 
-    Repeated Query
-        → Semantic Cache
-
-Setup:
-
-    1. Upload files to HuggingFace Space
-    2. Add GROQ_API_KEY in:
-       Space Settings → Secrets
-    3. Space automatically deploys app.py
+    REPEATED
+        User Query
+            ↓
+        Semantic Cache
+            ↓
+        Cached Answer
 """
+
 
 import os
 
 import streamlit as st
 
 from pipeline_cloud import Pipeline
-from groq_client import LOW_MODEL, HIGH_MODEL
+from groq_client import (
+    LOW_MODEL,
+    HIGH_MODEL,
+)
 
 
 # ============================================================================
-# Page configuration
+# PAGE CONFIG
 # ============================================================================
 
 st.set_page_config(
@@ -43,67 +55,76 @@ st.set_page_config(
 
 
 # ============================================================================
-# Benchmark Configuration
+# MODEL / BASELINE CONFIGURATION
 # ============================================================================
 
+LOW_MODEL_NAME = LOW_MODEL
+HIGH_MODEL_NAME = HIGH_MODEL
+
 # IMPORTANT:
-# Set this to the measured average latency of your
-# ALWAYS-HIGH-MODEL baseline.
+# Replace this with your ACTUAL measured baseline
+# for always using GPT-OSS-120B.
 #
-# Do not reuse an old Qwen/Ollama benchmark here.
-#
-# Replace this value after benchmarking GPT-OSS-120B.
+# If 69.03s is from your old Qwen/Ollama experiment,
+# do NOT present it as a GPT-OSS-120B benchmark.
 BASELINE_AVG = 69.03
 
 BASELINE_MODEL = HIGH_MODEL
 
 
 # ============================================================================
-# Compute weight
+# COMPUTE WEIGHT
 # ============================================================================
 
 def get_weight(model: str) -> float:
 
     """
-    Approximate compute weight based on model size.
+    Model-size weighted compute proxy.
 
     GPT-OSS-20B  → 20
     GPT-OSS-120B → 120
 
-    NOTE:
-    This is a simple proxy, NOT actual Groq billing cost.
+    This is only a proxy.
+    It is NOT actual Groq billing cost.
     """
 
     model_lower = model.lower()
 
-    if "20b" in model_lower:
-        return 20.0
-
     if "120b" in model_lower:
         return 120.0
+
+    if "20b" in model_lower:
+        return 20.0
 
     return 0.0
 
 
 # ============================================================================
-# Session State
+# SESSION STATE
 # ============================================================================
 
 if "history" not in st.session_state:
+
     st.session_state.history = []
 
+
 if "total_full_s" not in st.session_state:
+
     st.session_state.total_full_s = 0.0
 
+
 if "total_compute_full" not in st.session_state:
+
     st.session_state.total_compute_full = 0.0
 
+
 if "total_compute_base" not in st.session_state:
+
     st.session_state.total_compute_base = 0.0
 
 
 # ============================================================================
-# Load Pipeline
+# LOAD PIPELINE
 # ============================================================================
 
 @st.cache_resource
@@ -116,25 +137,29 @@ def load_pipeline():
 
 
 # ============================================================================
-# API Key Check
+# API KEY CHECK
 # ============================================================================
 
-if not os.environ.get("GROQ_API_KEY"):
+if not os.environ.get(
+    "GROQ_API_KEY"
+):
 
     st.error(
         "⚠️ GROQ_API_KEY is not set. "
-        "Add it in HuggingFace Space → "
-        "Settings → Secrets."
+        "Go to HuggingFace Space → "
+        "Settings → Secrets and add GROQ_API_KEY."
     )
 
     st.stop()
 
 
 # ============================================================================
-# Header
+# HEADER
 # ============================================================================
 
-st.title("⚡ Adaptive LLM Routing System")
+st.title(
+    "⚡ Adaptive LLM Routing System"
+)
 
 st.markdown(
     """
@@ -150,12 +175,18 @@ st.divider()
 
 
 # ============================================================================
-# Sidebar
+# SIDEBAR
 # ============================================================================
 
 with st.sidebar:
 
-    st.header("📊 Session Statistics")
+    st.header(
+        "📊 Session Statistics"
+    )
+
+    # ------------------------------------------------------------------------
+    # Current session statistics
+    # ------------------------------------------------------------------------
 
     n = len(
         st.session_state.history
@@ -184,6 +215,10 @@ with st.sidebar:
         for h in st.session_state.history
         if h["compressed_query"]
     )
+
+    # ------------------------------------------------------------------------
+    # Metrics
+    # ------------------------------------------------------------------------
 
     st.metric(
         "Total Queries",
@@ -218,29 +253,37 @@ with st.sidebar:
     st.divider()
 
     # ========================================================================
-    # Latency
+    # LATENCY
     # ========================================================================
 
-    st.subheader("⏱ Latency")
+    st.subheader(
+        "⏱ Latency"
+    )
 
     if n > 0:
 
-        avg = (
+        average_latency = (
             st.session_state.total_full_s
             / n
         )
 
-        pct = (
-            1 - avg / BASELINE_AVG
+        percentage = (
+            1
+            - (
+                average_latency
+                / BASELINE_AVG
+            )
         ) * 100
 
         st.metric(
             "Avg Latency",
-            f"{avg:.2f}s",
-            delta=f"{pct:.1f}% vs baseline",
+            f"{average_latency:.2f}s",
+            delta=(
+                f"{percentage:.1f}% vs baseline"
+            ),
             delta_color=(
                 "normal"
-                if pct > 0
+                if percentage > 0
                 else "inverse"
             ),
         )
@@ -257,17 +300,19 @@ with st.sidebar:
     st.divider()
 
     # ========================================================================
-    # Compute
+    # COMPUTE
     # ========================================================================
 
-    st.subheader("💰 Compute Proxy")
+    st.subheader(
+        "💰 Compute Proxy"
+    )
 
     if (
         st.session_state.total_compute_base
         > 0
     ):
 
-        reduction = (
+        compute_reduction = (
             1
             - (
                 st.session_state.total_compute_full
@@ -277,8 +322,10 @@ with st.sidebar:
 
         st.metric(
             "Compute Reduction",
-            f"{reduction:.1f}%",
-            delta="vs always GPT-OSS-120B",
+            f"{compute_reduction:.1f}%",
+            delta=(
+                "vs always GPT-OSS-120B"
+            ),
         )
 
     st.caption(
@@ -289,7 +336,7 @@ with st.sidebar:
     st.divider()
 
     # ========================================================================
-    # Clear history
+    # CLEAR HISTORY
     # ========================================================================
 
     if st.button(
@@ -308,7 +355,7 @@ with st.sidebar:
         st.rerun()
 
     # ========================================================================
-    # Clear cache
+    # CLEAR CACHE
     # ========================================================================
 
     if st.button(
@@ -319,6 +366,7 @@ with st.sidebar:
         pipeline = load_pipeline()
 
         if pipeline.cache:
+
             pipeline.cache.clear()
 
         st.success(
@@ -327,12 +375,13 @@ with st.sidebar:
 
 
 # ============================================================================
-# Input
+# QUERY INPUT
 # ============================================================================
 
 col1, col2 = st.columns(
     [3, 1]
 )
+
 
 with col1:
 
@@ -343,6 +392,7 @@ with col1:
             "/ Explain how gold prices work"
         ),
     )
+
 
 with col2:
 
@@ -358,12 +408,14 @@ with col2:
 
 
 # ============================================================================
-# Example Queries
+# EXAMPLE QUERIES
 # ============================================================================
 
-st.markdown("**Try these:**")
+st.markdown(
+    "**Try these:**"
+)
 
-ex_cols = st.columns(4)
+example_columns = st.columns(4)
 
 examples = [
 
@@ -376,12 +428,13 @@ examples = [
     "What are the risks of prop trading without risk management?",
 ]
 
-for col, example in zip(
-    ex_cols,
+
+for column, example in zip(
+    example_columns,
     examples,
 ):
 
-    with col:
+    with column:
 
         label = (
             example[:35] + "..."
@@ -395,58 +448,64 @@ for col, example in zip(
         ):
 
             query = example
+
             submit = True
 
 
 # ============================================================================
-# Process Query
+# PROCESS QUERY
 # ============================================================================
 
 if submit and query.strip():
 
+    clean_query = query.strip()
+
     pipeline = load_pipeline()
 
     with st.spinner(
-        "Analyzing and routing query..."
+        "Analyzing query and selecting model..."
     ):
 
         result = pipeline.answer(
-            query.strip()
+            clean_query
         )
 
-    st.divider()
+    # ========================================================================
+    # ROUTING STATUS
+    # ========================================================================
 
-    # ========================================================================
-    # Routing Status
-    # ========================================================================
+    st.divider()
 
     if result.cache_hit:
 
         st.success(
-            "⚡ CACHE HIT — "
-            "Reused cached answer without LLM generation."
+            "⚡ **CACHE HIT** — "
+            "Reused cached answer without "
+            "LLM generation."
         )
 
     elif result.complexity == "SIMPLE":
 
         st.info(
             "🟢 **SIMPLE** → "
-            f"GPT-OSS-20B"
+            "**GPT-OSS-20B**"
         )
 
     else:
 
         st.warning(
             "🟠 **COMPLEX** → "
-            "GPT-OSS-20B compression → "
-            "GPT-OSS-120B answer"
+            "**GPT-OSS-20B** compression "
+            "→ **GPT-OSS-120B** answer"
         )
 
     # ========================================================================
-    # Metrics
+    # METRICS
     # ========================================================================
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1, m2, m3, m4, m5, m6 = (
+        st.columns(6)
+    )
 
     m1.metric(
         "Total",
@@ -468,40 +527,56 @@ if submit and query.strip():
         f"{result.generation_s:.2f}s",
     )
 
-    model_display = result.model_used
+    # ------------------------------------------------------------------------
+    # Model display
+    # ------------------------------------------------------------------------
 
-    if model_display == "cache":
+    if result.cache_hit:
 
         model_display = "CACHE"
 
-    elif len(model_display) > 18:
+    elif "120b" in result.model_used.lower():
 
-        model_display = (
-            "GPT-OSS-20B"
-            if "20b" in model_display.lower()
-            else "GPT-OSS-120B"
-        )
+        model_display = "GPT-OSS-120B"
+
+    elif "20b" in result.model_used.lower():
+
+        model_display = "GPT-OSS-20B"
+
+    else:
+
+        model_display = result.model_used
 
     m5.metric(
         "Model",
         model_display,
     )
 
+    # ------------------------------------------------------------------------
+    # Time saved
+    # ------------------------------------------------------------------------
+
     saving = max(
         0,
         BASELINE_AVG - result.total_s,
+    )
+
+    saving_percentage = (
+        saving
+        / BASELINE_AVG
+        * 100
     )
 
     m6.metric(
         "Time Saved",
         f"{saving:.1f}s",
         delta=(
-            f"{saving / BASELINE_AVG * 100:.0f}%"
+            f"{saving_percentage:.0f}%"
         ),
     )
 
     # ========================================================================
-    # Compressed Query
+    # COMPRESSED QUERY
     # ========================================================================
 
     if result.compressed_query:
@@ -515,26 +590,28 @@ if submit and query.strip():
         )
 
         st.caption(
-            "GPT-OSS-20B compressed the original query. "
-            "GPT-OSS-120B generated the final answer "
-            "from the compressed brief."
+            "GPT-OSS-20B compressed the original "
+            "query. GPT-OSS-120B generated the "
+            "final answer from the compressed brief."
         )
 
     # ========================================================================
-    # Answer
+    # ANSWER
     # ========================================================================
 
-    st.subheader("💬 Answer")
+    st.subheader(
+        "💬 Answer"
+    )
 
     st.markdown(
         result.answer
     )
 
     # ========================================================================
-    # Compute
+    # COMPUTE PROXY
     # ========================================================================
 
-    tokens = (
+    total_tokens = (
         (result.input_tokens or 0)
         +
         (result.output_tokens or 0)
@@ -547,21 +624,22 @@ if submit and query.strip():
     else:
 
         compute_full = (
-            tokens
+            total_tokens
             * get_weight(
                 result.model_used
             )
         )
 
+    # Always-high baseline
     compute_base = (
-        tokens
+        total_tokens
         * get_weight(
             BASELINE_MODEL
         )
     )
 
     # ========================================================================
-    # Session totals
+    # UPDATE SESSION TOTALS
     # ========================================================================
 
     st.session_state.total_full_s += (
@@ -577,14 +655,12 @@ if submit and query.strip():
     )
 
     # ========================================================================
-    # History
+    # ADD TO HISTORY
     # ========================================================================
 
     st.session_state.history.append(
-
         {
-
-            "query": query.strip(),
+            "query": clean_query,
 
             "complexity": result.complexity,
 
@@ -600,18 +676,31 @@ if submit and query.strip():
 
             "generation_s": result.generation_s,
 
-            "compressed_query": result.compressed_query,
+            "compressed_query": (
+                result.compressed_query
+            ),
 
-            "answer": result.answer[:300],
+            "answer": (
+                result.answer[:300]
+            ),
 
-            "compute_units": compute_full,
-
+            "compute_units": (
+                compute_full
+            ),
         }
     )
 
+    # ========================================================================
+    # IMPORTANT:
+    # Force Streamlit to rerun so that the sidebar
+    # immediately displays the new statistics.
+    # ========================================================================
+
+    st.rerun()
+
 
 # ============================================================================
-# Query History
+# QUERY HISTORY
 # ============================================================================
 
 if st.session_state.history:
@@ -622,80 +711,123 @@ if st.session_state.history:
         "📋 Query History"
     )
 
-    for i, h in enumerate(
+    for i, history_item in enumerate(
         reversed(
             st.session_state.history
         ),
         1,
     ):
 
-        icon = (
+        # --------------------------------------------------------------------
+        # Icon
+        # --------------------------------------------------------------------
 
-            "⚡"
-            if h["cache_hit"]
+        if history_item["cache_hit"]:
 
-            else (
-                "🟢"
-                if h["complexity"] == "SIMPLE"
-                else "🟠"
-            )
-        )
+            icon = "⚡"
+
+        elif (
+            history_item["complexity"]
+            == "SIMPLE"
+        ):
+
+            icon = "🟢"
+
+        else:
+
+            icon = "🟠"
+
+        # --------------------------------------------------------------------
+        # Expander
+        # --------------------------------------------------------------------
 
         with st.expander(
 
             (
                 f"{icon} "
                 f"[{i}] "
-                f"{h['query'][:60]} "
-                f"— {h['total_s']:.1f}s"
+                f"{history_item['query'][:60]} "
+                f"— "
+                f"{history_item['total_s']:.1f}s"
             ),
 
-            expanded=(i == 1),
+            expanded=(
+                i == 1
+            ),
         ):
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4 = (
+                st.columns(4)
+            )
 
             c1.metric(
                 "Complexity",
-                h["complexity"],
+                history_item[
+                    "complexity"
+                ],
             )
 
             c2.metric(
                 "Cache Hit",
-                "Yes"
-                if h["cache_hit"]
-                else "No",
+                (
+                    "Yes"
+                    if history_item[
+                        "cache_hit"
+                    ]
+                    else "No"
+                ),
             )
 
             c3.metric(
                 "Compress",
-                f"{h['compress_s']:.2f}s",
+                (
+                    f"{history_item['compress_s']:.2f}s"
+                ),
             )
 
             c4.metric(
                 "Compute Proxy",
-                f"{h['compute_units']:.0f}",
+                (
+                    f"{history_item['compute_units']:.0f}"
+                ),
             )
 
-            if h["compressed_query"]:
+            # ---------------------------------------------------------------
+            # Compressed brief
+            # ---------------------------------------------------------------
+
+            if history_item[
+                "compressed_query"
+            ]:
 
                 st.markdown(
                     "**Compressed brief:**"
                 )
 
                 st.info(
-                    h["compressed_query"]
+                    history_item[
+                        "compressed_query"
+                    ]
                 )
+
+            # ---------------------------------------------------------------
+            # Answer
+            # ---------------------------------------------------------------
 
             st.markdown(
                 "**Answer:**"
             )
 
+            answer_preview = (
+                history_item["answer"]
+            )
+
+            if len(
+                answer_preview
+            ) == 300:
+
+                answer_preview += "..."
+
             st.markdown(
-                h["answer"]
-                + (
-                    "..."
-                    if len(h["answer"]) == 300
-                    else ""
-                )
+                answer_preview
             )
