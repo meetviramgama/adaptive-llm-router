@@ -1,41 +1,38 @@
 """
 Adaptive LLM Routing Pipeline
-------------------------------
+-----------------------------
 
-Routing:
+Flow:
 
-    Query
-      |
-      v
-    Semantic Cache
-      |
-      |-- HIT --> Cached Answer
-      |
-      |-- MISS
-            |
-            v
-      Complexity Router
-            |
-       +----+----+
-       |         |
-     SIMPLE   COMPLEX
-       |         |
-       v         v
-     20B       20B
-       |      Compress
-       |         |
-       |         v
-       |       120B
-       |         |
-       +----+----+
-            |
-            v
-          Answer
+                    USER QUERY
+                        |
+                        v
+                 SEMANTIC CACHE
+                   /        \
+                HIT          MISS
+                 |             |
+                 v             v
+             CACHE       COMPLEXITY ROUTER
+                              |
+                       +------+------+
+                       |             |
+                    SIMPLE        COMPLEX
+                       |             |
+                       v             v
+                    20B          COMPRESS
+                                     |
+                                     v
+                                   120B
+                                     |
+                                     v
+                                   ANSWER
 """
+
 
 import os
 import time
 from dataclasses import dataclass
+
 
 from groq_client import (
     generate,
@@ -45,41 +42,55 @@ from groq_client import (
 
 
 # ============================================================================
-# CLASSIFIER PROMPT
+# CLASSIFIER
 # ============================================================================
 
-CLASSIFIER_PROMPT = """You are a strict binary query complexity classifier.
+CLASSIFIER_SYSTEM = """
+You are a strict query complexity classifier.
 
-Classify the user query as exactly one:
+Classify the user's query into exactly one category:
 
 SIMPLE
 COMPLEX
 
-SIMPLE:
-Use SIMPLE only for short factual questions that need a direct answer.
+SIMPLE means:
+- Short factual questions
+- Definitions
+- Simple calculations
+- Direct factual answers
+- Basic knowledge questions
 
 Examples:
-- What is the capital of France?
-- Who invented the telephone?
-- What is Python?
-- What is 2 + 2?
-- Define inflation.
+What is Python?
+What is the capital of France?
+Who invented the telephone?
+What is 2 + 2?
+Define inflation.
 
-COMPLEX:
-Use COMPLEX when the query requires explanation, analysis,
-comparison, reasoning, multiple factors, causes/effects,
-recommendations, strategy, risks, evaluation, or detailed synthesis.
+COMPLEX means:
+- Explanation
+- Analysis
+- Comparison
+- Reasoning
+- Strategy
+- Recommendations
+- Risks
+- Multiple factors
+- Cause and effect
+- Detailed technical questions
+- Step-by-step questions
+- Evaluation
 
 Examples:
-- Explain how gold prices are determined in global markets.
-- Why does inflation affect interest rates?
-- Compare React and Angular.
-- Analyze the risks of prop trading.
-- Explain how transformers work.
-- How does monetary policy affect gold prices?
-- Compare Docker and virtual machines.
+Explain how transformers work.
+Why does inflation affect interest rates?
+Compare Docker and virtual machines.
+Analyze the risks of prop trading.
+Explain how gold prices are determined.
+How can I optimize an LLM routing system?
 
-Return exactly one word:
+IMPORTANT:
+Return ONLY:
 
 SIMPLE
 
@@ -90,12 +101,13 @@ COMPLEX
 
 
 # ============================================================================
-# COMPRESSION PROMPT
+# COMPRESSION
 # ============================================================================
 
-COMPRESS_SYSTEM = """You are a query compression assistant.
+COMPRESSION_SYSTEM = """
+You are a query compression assistant.
 
-Rewrite the user's complex query into a precise structured brief.
+Convert the user's complex query into a precise structured brief.
 
 Output ONLY:
 
@@ -105,7 +117,7 @@ OUTPUT: Expected answer format or depth.
 
 Maximum 3 sentences.
 
-Do not answer the query.
+Do NOT answer the question.
 """
 
 
@@ -117,17 +129,25 @@ Do not answer the query.
 class PipelineResponse:
 
     query: str
+
     answer: str
+
     complexity: str
+
     cache_hit: bool
+
     model_used: str
 
     classifier_s: float
+
     compress_s: float
+
     generation_s: float
+
     total_s: float
 
     input_tokens: int
+
     output_tokens: int
 
     compressed_query: str
@@ -139,101 +159,149 @@ class PipelineResponse:
 
 class SimpleCache:
 
+    """
+    Local semantic cache.
+
+    Uses:
+        sentence-transformers
+        FAISS
+
+    This avoids relying on a Groq embeddings endpoint.
+    """
+
     def __init__(self, threshold: float = 0.85):
 
         self.threshold = threshold
+
         self.entries = []
+
         self._ready = False
 
+        self._model = None
+        self._faiss = None
+        self._np = None
+        self._index = None
+
         self._init()
+
+
+    # ------------------------------------------------------------------------
+    # INITIALIZE
+    # ------------------------------------------------------------------------
 
     def _init(self):
 
         try:
 
-            import faiss
             import numpy as np
+            import faiss
 
-            self._faiss = faiss
+            from sentence_transformers import SentenceTransformer
+
             self._np = np
+            self._faiss = faiss
 
-            self._index = faiss.IndexFlatIP(1536)
+            print("Loading semantic embedding model...")
+
+            self._model = SentenceTransformer(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            )
+
+            dimension = 384
+
+            self._index = faiss.IndexFlatIP(
+                dimension
+            )
 
             self._ready = True
 
+            print("Semantic cache ready.")
+
         except Exception as e:
 
-            print(f"FAISS cache unavailable: {e}")
+            print(
+                f"Semantic cache unavailable: {e}"
+            )
 
             self._ready = False
+
+
+    # ------------------------------------------------------------------------
+    # EMBEDDING
+    # ------------------------------------------------------------------------
 
     def _embed(self, text: str):
 
         if not self._ready:
+
             return None
 
         try:
 
-            from groq import Groq
-
-            api_key = os.environ.get(
-                "GROQ_API_KEY"
+            vector = self._model.encode(
+                [text],
+                normalize_embeddings=True,
+                convert_to_numpy=True,
             )
 
-            if not api_key:
-                return None
-
-            client = Groq(
-                api_key=api_key
+            return vector.astype(
+                self._np.float32
             )
-
-            response = client.embeddings.create(
-                model="nomic-embed-text-v1.5",
-                input=text,
-            )
-
-            vector = self._np.array(
-                [response.data[0].embedding],
-                dtype=self._np.float32,
-            )
-
-            self._faiss.normalize_L2(vector)
-
-            return vector
 
         except Exception as e:
 
-            print(f"Embedding error: {e}")
+            print(
+                f"Embedding error: {e}"
+            )
 
             return None
+
+
+    # ------------------------------------------------------------------------
+    # LOOKUP
+    # ------------------------------------------------------------------------
 
     def lookup(self, query: str):
 
         if not self._ready:
+
             return None
 
         if self._index.ntotal == 0:
+
             return None
 
         vector = self._embed(query)
 
         if vector is None:
+
             return None
 
         scores, indices = self._index.search(
             vector,
-            k=1,
+            1,
         )
 
-        similarity = float(scores[0][0])
+        similarity = float(
+            scores[0][0]
+        )
 
         if similarity >= self.threshold:
 
-            idx = int(indices[0][0])
+            idx = int(
+                indices[0][0]
+            )
 
-            return self.entries[idx][1]
+            if 0 <= idx < len(self.entries):
+
+                return self.entries[idx][1]
 
         return None
+
+
+    # ------------------------------------------------------------------------
+    # STORE
+    # ------------------------------------------------------------------------
 
     def store(
         self,
@@ -242,29 +310,47 @@ class SimpleCache:
     ):
 
         if not self._ready:
+
             return
 
         vector = self._embed(query)
 
         if vector is None:
+
             return
 
         self._index.add(vector)
 
         self.entries.append(
-            (query, answer)
+            (
+                query,
+                answer,
+            )
         )
+
+
+    # ------------------------------------------------------------------------
+    # CLEAR
+    # ------------------------------------------------------------------------
 
     def clear(self):
 
         if not self._ready:
+
+            self.entries = []
+
             return
 
-        self._index = (
-            self._faiss.IndexFlatIP(1536)
+        self._index = self._faiss.IndexFlatIP(
+            384
         )
 
         self.entries = []
+
+
+    # ------------------------------------------------------------------------
+    # STATS
+    # ------------------------------------------------------------------------
 
     def stats(self):
 
@@ -273,6 +359,7 @@ class SimpleCache:
                 self.entries
             ),
             "threshold": self.threshold,
+            "ready": self._ready,
         }
 
 
@@ -289,6 +376,7 @@ class Pipeline:
     ):
 
         self.use_cache = use_cache
+
         self.use_compression = use_compression
 
         self.cache = (
@@ -297,8 +385,9 @@ class Pipeline:
             else None
         )
 
+
     # ========================================================================
-    # DETERMINISTIC COMPLEXITY CHECK
+    # DETERMINISTIC COMPLEXITY
     # ========================================================================
 
     def _obvious_complexity(
@@ -315,6 +404,7 @@ class Pipeline:
             "explain why",
 
             "why ",
+
             "how does ",
             "how do ",
             "how can ",
@@ -372,6 +462,7 @@ class Pipeline:
 
         return None
 
+
     # ========================================================================
     # CLASSIFIER
     # ========================================================================
@@ -381,9 +472,9 @@ class Pipeline:
         query: str,
     ):
 
-        # --------------------------------------------------------------------
-        # First: deterministic routing for obvious complex queries
-        # --------------------------------------------------------------------
+        # ------------------------------------------------------------
+        # First use deterministic routing
+        # ------------------------------------------------------------
 
         obvious = self._obvious_complexity(
             query
@@ -393,28 +484,37 @@ class Pipeline:
 
             return obvious, 0.0
 
-        # --------------------------------------------------------------------
-        # Otherwise use GPT-OSS-20B classifier
-        # --------------------------------------------------------------------
+
+        # ------------------------------------------------------------
+        # GPT-OSS-20B classifier
+        # ------------------------------------------------------------
+
+        start = time.perf_counter()
 
         response = generate(
-
             model=LOW_MODEL,
 
             prompt=query,
 
-            system=CLASSIFIER_PROMPT,
+            system=CLASSIFIER_SYSTEM,
 
             max_tokens=5,
 
             temperature=0.0,
         )
 
+        classifier_time = (
+            time.perf_counter()
+            - start
+        )
+
+
         raw = (
             response.text
             .strip()
             .upper()
         )
+
 
         if raw.startswith("COMPLEX"):
 
@@ -429,10 +529,12 @@ class Pipeline:
             # Safe fallback
             label = "COMPLEX"
 
+
         return (
             label,
-            response.wall_clock_s,
+            classifier_time,
         )
+
 
     # ========================================================================
     # COMPRESSION
@@ -449,17 +551,18 @@ class Pipeline:
 
             prompt=query,
 
-            system=COMPRESS_SYSTEM,
+            system=COMPRESSION_SYSTEM,
 
             max_tokens=200,
 
-            temperature=0.3,
+            temperature=0.2,
         )
 
         return (
             response.text,
             response.wall_clock_s,
         )
+
 
     # ========================================================================
     # ANSWER
@@ -470,7 +573,8 @@ class Pipeline:
         query: str,
     ):
 
-        start = time.time()
+        total_start = time.perf_counter()
+
 
         # ====================================================================
         # CACHE
@@ -483,6 +587,11 @@ class Pipeline:
             )
 
             if cached:
+
+                total_time = (
+                    time.perf_counter()
+                    - total_start
+                )
 
                 return PipelineResponse(
 
@@ -503,7 +612,7 @@ class Pipeline:
                     generation_s=0.0,
 
                     total_s=round(
-                        time.time() - start,
+                        total_time,
                         3,
                     ),
 
@@ -514,6 +623,7 @@ class Pipeline:
                     compressed_query="",
                 )
 
+
         # ====================================================================
         # CLASSIFICATION
         # ====================================================================
@@ -522,15 +632,19 @@ class Pipeline:
             self._classify(query)
         )
 
+
         # ====================================================================
         # ROUTING
         # ====================================================================
 
-        generation_start = time.time()
-
         compressed_query = ""
 
         compress_s = 0.0
+
+        generation_start = (
+            time.perf_counter()
+        )
+
 
         # --------------------------------------------------------------------
         # SIMPLE → GPT-OSS-20B
@@ -544,36 +658,62 @@ class Pipeline:
 
                 prompt=query,
 
-                system=(
-                    "You are a helpful assistant. "
-                    "Answer clearly and concisely."
-                ),
+                system="""
+You are a helpful assistant.
+
+Answer the user's question directly,
+accurately, and clearly.
+
+For simple questions, keep the answer
+concise and avoid unnecessary explanation.
+""",
 
                 max_tokens=500,
 
                 temperature=0.7,
             )
 
+
         # --------------------------------------------------------------------
-        # COMPLEX → 20B → 120B
+        # COMPLEX → 20B COMPRESSION → 120B
         # --------------------------------------------------------------------
 
         else:
 
             if self.use_compression:
 
-                (
-                    compressed_query,
-                    compress_s,
-                ) = self._compress(query)
+                compressed_query, compress_s = (
+                    self._compress(query)
+                )
 
                 prompt_for_high = (
                     compressed_query
                 )
 
+                high_system = """
+You are a highly capable reasoning assistant.
+
+The user query has been compressed into a
+structured brief by a smaller model.
+
+Use the compressed brief to understand the
+original intent and provide a thorough,
+accurate and useful answer.
+
+Do not mention the compression process.
+"""
+
             else:
 
                 prompt_for_high = query
+
+                high_system = """
+You are a highly capable assistant.
+
+Answer the user's question thoroughly,
+accurately and clearly.
+"""
+
 
             response = generate(
 
@@ -581,40 +721,47 @@ class Pipeline:
 
                 prompt=prompt_for_high,
 
-                system=(
-                    "You are a highly capable assistant. "
-                    "Answer thoroughly and accurately."
-                ),
+                system=high_system,
 
                 max_tokens=2000,
 
                 temperature=0.7,
             )
 
+
         # ====================================================================
         # TIMING
         # ====================================================================
 
         generation_s = (
-            time.time()
+            time.perf_counter()
             - generation_start
         )
 
+
         total_s = (
-            time.time()
-            - start
+            time.perf_counter()
+            - total_start
         )
+
 
         # ====================================================================
         # CACHE STORE
         # ====================================================================
 
-        if self.use_cache and self.cache:
+        if (
+            self.use_cache
+            and self.cache
+            and response.text
+        ):
 
             self.cache.store(
+
                 query,
+
                 response.text,
             )
+
 
         # ====================================================================
         # RESPONSE
@@ -660,5 +807,7 @@ class Pipeline:
                 response.eval_count
             ),
 
-            compressed_query=compressed_query,
+            compressed_query=(
+                compressed_query
+            ),
         )

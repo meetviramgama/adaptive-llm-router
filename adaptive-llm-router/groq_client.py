@@ -1,19 +1,11 @@
 """
 Groq API Client
 ---------------
-Cloud LLM client for the Adaptive LLM Routing System.
+Cloud LLM client for Adaptive LLM Routing System.
 
 Models:
     Low tier  : openai/gpt-oss-20b
     High tier : openai/gpt-oss-120b
-
-Usage:
-    Set GROQ_API_KEY environment variable before running.
-
-    HuggingFace Spaces:
-        Settings → Secrets → GROQ_API_KEY
-
-    Never hardcode the API key in code.
 """
 
 import os
@@ -25,7 +17,7 @@ from groq import Groq
 
 
 # ============================================================================
-# Models
+# MODELS
 # ============================================================================
 
 LOW_MODEL = "openai/gpt-oss-20b"
@@ -33,8 +25,7 @@ HIGH_MODEL = "openai/gpt-oss-120b"
 
 
 # ============================================================================
-# Response dataclass
-# Same interface as the previous OllamaResponse
+# RESPONSE
 # ============================================================================
 
 @dataclass
@@ -48,27 +39,32 @@ class GroqResponse:
 
 
 # ============================================================================
-# Client
+# CLIENT
 # ============================================================================
+
+_client = None
+
 
 def get_client() -> Groq:
-    """
-    Create and return a Groq client using GROQ_API_KEY.
-    """
+    global _client
 
-    api_key = os.environ.get("GROQ_API_KEY")
+    if _client is None:
 
-    if not api_key:
-        raise ValueError(
-            "GROQ_API_KEY environment variable not set. "
-            "Set it in HuggingFace Spaces Secrets or your .env file."
-        )
+        api_key = os.environ.get("GROQ_API_KEY")
 
-    return Groq(api_key=api_key)
+        if not api_key:
+            raise ValueError(
+                "GROQ_API_KEY is missing. "
+                "Add it in Hugging Face Spaces → Settings → Secrets."
+            )
+
+        _client = Groq(api_key=api_key)
+
+    return _client
 
 
 # ============================================================================
-# Generate
+# GENERATE
 # ============================================================================
 
 def generate(
@@ -79,29 +75,6 @@ def generate(
     temperature: float = 0.7,
     think: bool = True,
 ) -> GroqResponse:
-    """
-    Call Groq API and return response text + timing/token metrics.
-
-    Parameters:
-        model:
-            LOW_MODEL or HIGH_MODEL
-
-        prompt:
-            User/query prompt
-
-        system:
-            Optional system instruction
-
-        max_tokens:
-            Maximum output tokens
-
-        temperature:
-            Sampling temperature
-
-        think:
-            Kept for compatibility with previous Ollama interface.
-            Currently ignored.
-    """
 
     client = get_client()
 
@@ -122,7 +95,7 @@ def generate(
         }
     )
 
-    start = time.time()
+    start = time.perf_counter()
 
     response = client.chat.completions.create(
         model=model,
@@ -131,16 +104,27 @@ def generate(
         temperature=temperature,
     )
 
-    wall_clock = time.time() - start
+    wall_clock = time.perf_counter() - start
 
-    text = response.choices[0].message.content or ""
+    text = ""
+
+    if response.choices:
+        text = response.choices[0].message.content or ""
 
     input_tokens = 0
     output_tokens = 0
 
     if response.usage:
-        input_tokens = response.usage.prompt_tokens or 0
-        output_tokens = response.usage.completion_tokens or 0
+
+        input_tokens = (
+            getattr(response.usage, "prompt_tokens", 0)
+            or 0
+        )
+
+        output_tokens = (
+            getattr(response.usage, "completion_tokens", 0)
+            or 0
+        )
 
     tokens_per_second = (
         output_tokens / wall_clock
@@ -159,7 +143,7 @@ def generate(
 
 
 # ============================================================================
-# Local test
+# TEST
 # ============================================================================
 
 if __name__ == "__main__":
@@ -167,14 +151,17 @@ if __name__ == "__main__":
     print("Testing Groq client...")
 
     for model, label in [
-        (LOW_MODEL, "Low Tier - GPT-OSS-20B"),
-        (HIGH_MODEL, "High Tier - GPT-OSS-120B"),
+        (LOW_MODEL, "GPT-OSS-20B"),
+        (HIGH_MODEL, "GPT-OSS-120B"),
     ]:
 
-        print(f"\n--- {label} ---")
-        print(f"Model: {model}")
+        print()
+        print("=" * 60)
+        print(label)
+        print("=" * 60)
 
         try:
+
             result = generate(
                 model=model,
                 prompt="What is the capital of France? Answer in one word.",
@@ -182,17 +169,18 @@ if __name__ == "__main__":
                 temperature=0.0,
             )
 
-            print(f"Response:   {result.text}")
-            print(f"Latency:    {result.wall_clock_s:.2f}s")
+            print("Response:", result.text)
+            print(f"Latency: {result.wall_clock_s:.2f}s")
             print(
-                f"Tokens:     "
-                f"{result.prompt_eval_count} in / "
-                f"{result.eval_count} out"
+                f"Tokens: "
+                f"{result.prompt_eval_count} input / "
+                f"{result.eval_count} output"
             )
             print(
-                f"Speed:      "
+                f"Speed: "
                 f"{result.tokens_per_second:.1f} tok/s"
             )
 
         except Exception as e:
-            print(f"ERROR: {e}")
+
+            print("ERROR:", e)
